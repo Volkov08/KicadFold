@@ -10,6 +10,18 @@ from mirrorfold_dialog import MirrorFoldDialog
 def getIdentifier(item):
     return str(item.GetPosition().x)+";"+str(item.GetPosition().y)+";"+str(item.GetLayerName())
 
+def getPadIdentifier(item):
+    return str(item.GetPosition().x)+";"+str(item.GetPosition().y)+";"+str(item.GetName())
+
+
+"""
+def createTHTPad(component,num,pos, drill,size):
+    newMod = io.FootprintLoad(LIBPATH, FOOTPRINT)
+    newMod.SetReference("P-%s-%d" % (component, num))
+    x = CENTER[0] + r * math.cos(theta)
+    newMod.SetPosition(pos)
+"""
+
 
 class MirrorFold(pcbnew.ActionPlugin):
     def defaults(self):
@@ -54,21 +66,81 @@ class MirrorFold(pcbnew.ActionPlugin):
             destLayers = [pcbnew.Edge_Cuts,pcbnew.F_SilkS,pcbnew.B_SilkS]
 
             for fp in self.board.GetFootprints():
+                if (fp.GetReference().endswith("_FoldPads")):
+                    self.board.Remove(fp)
+
+            for fp in self.board.GetFootprints():
+                hasCutout = False
                 for d in fp.GraphicalItems():
                     if (d.GetLayer() in sourceLayers):
+
                         newd = d.Duplicate()
-                        #newd.TransformShapeToPolygon()
-                        #for some reason, text flips the wrong way
-                        newd.Mirror(fold_plane,flip_dir)
+                        #for some reason, text flips the wrong way and behaves weird in general
+                        print("a")
+                        try:
+                            newd_text = newd.GetShownText(True)
+                            if (flip_dir == pcbnew.FLIP_DIRECTION_LEFT_RIGHT):
+                                newd.Mirror(fold_plane,pcbnew.FLIP_DIRECTION_TOP_BOTTOM)
+                            else:
+                                newd.Mirror(fold_plane,pcbnew.FLIP_DIRECTION_LEFT_RIGHT)
+                            newd.SetText(newd_text)
+                            newd.SetMirrored(not d.IsMirrored())
+                        except:
+                            newd.Mirror(fold_plane,flip_dir)
 
                         
                         layerIndex = sourceLayers.index(d.GetLayer())
-                        newd.SetLayer(destLayers[layerIndex])
+                        newLayer = destLayers[layerIndex]
+                        if (newLayer == pcbnew.Edge_Cuts):
+                            hasCutout = True
+                        newd.SetLayer(newLayer)
 
                         saveData["placed"].append(getIdentifier(newd))
-
+                        
                         self.board.Add(newd)
-            
+
+                fpnew = pcbnew.FOOTPRINT(self.board)
+                fpnew.SetReference(fp.GetReference()+"_FoldPads")
+                fpnew_pos = fp.GetPosition()-fold_plane
+                if(flip_dir == pcbnew.FLIP_DIRECTION_LEFT_RIGHT):
+                    fpnew_pos.x *= -1
+                else:
+                    fpnew_pos.y *= -1
+                fpnew_pos += fold_plane
+                
+                fpnew.SetPosition(fpnew_pos)
+
+                fpnew.SetLayer(pcbnew.F_SilkS)
+
+                hasNewPads = False
+                for pad in fp.Pads():
+                    pname = pad.GetName()
+
+                    if (not (pname.endswith("_F") or pname.endswith("_FC"))):
+                        continue
+
+                    hasNewPads = True
+                    newpad = pad.Duplicate()
+
+                    pad_pos = pad.GetPosition()-fold_plane
+                    if(flip_dir == pcbnew.FLIP_DIRECTION_LEFT_RIGHT):
+                        pad_pos.x *= -1
+                    else:
+                        pad_pos.y *= -1
+
+                    pad_pos += fold_plane
+
+                    newpad.SetPosition(pad_pos)
+
+                    if(pname.endswith("_FC")):
+                        pad.SetProperty(pcbnew.PAD_PROP_CASTELLATED)
+
+                    saveData["placed"].append(getPadIdentifier(newpad))
+                    fpnew.Add(newpad)
+
+                if (hasNewPads):
+                    self.board.Add(fpnew)
+
             with open("mirrorfold_state.json", "w") as f:
                 json.dump(saveData, f)
 
